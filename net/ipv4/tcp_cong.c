@@ -226,6 +226,7 @@ int tcp_set_allowed_congestion_control(char *val)
 out:
 	spin_unlock(&tcp_cong_list_lock);
 
+	kfree(saved_clone);
 	return ret;
 }
 
