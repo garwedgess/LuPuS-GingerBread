@@ -57,8 +57,6 @@
 #include <mach/qdsp5v2/marimba_profile_azami.h>
 #elif defined(CONFIG_MACH_SEMC_HAIDA)
 #include <mach/qdsp5v2/marimba_profile_hallon.h>
-#elif defined(CONFIG_MACH_SEMC_PHOENIX)
-#include <mach/qdsp5v2/marimba_profile_phoenix.h>
 #else
 #include <mach/qdsp5v2/marimba_profile_mogami.h>
 #endif
