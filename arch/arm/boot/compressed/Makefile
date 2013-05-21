@@ -4,7 +4,10 @@
 # create a compressed vmlinuz image from the original vmlinux
 #
 
+plus_sec := $(call as-instr,.arch_extension sec,+sec) 
+
 HEAD	= head.o
+AFLAGS_head.o += -Wa,-march=armv7-a$(plus_sec) 
 OBJS	= misc.o
 FONTC	= $(srctree)/drivers/video/console/font_acorn_8x8.c
 
@@ -114,11 +117,14 @@ $(obj)/vmlinux: $(obj)/vmlinux.lds $(obj)/$(HEAD) $(obj)/piggy.$(suffix_y).o \
 	 	$(addprefix $(obj)/, $(OBJS)) $(lib1funcs) FORCE
 	$(call if_changed,ld)
 	@:
+AFLAGS_piggy.o += -Wa,-march=armv7-a$(plus_sec)
 
+AFLAGS_piggy.$(suffix_y).o += -Wa,-march=armv7-a$(plus_sec)
 $(obj)/piggy.$(suffix_y): $(obj)/../Image FORCE
 	$(call if_changed,$(suffix_y))
 
 $(obj)/piggy.$(suffix_y).o:  $(obj)/piggy.$(suffix_y) FORCE
+AFLAGS_piggy.o += -Wa,-march=armv7-a$(plus_sec)
 
 CFLAGS_font.o := -Dstatic=
 
