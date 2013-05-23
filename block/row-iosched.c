@@ -663,11 +663,11 @@ static ssize_t row_var_show(int var, char *page)
 	return snprintf(page, 100, "%d\n", var);
 }
 
-static ssize_t row_var_store(int *var, const char *page, size_t count)
+static ssize_t row_var_store(unsigned long *var, const char *page, size_t count)
 {
-	int err;
-	err = kstrtoul(page, 10, (unsigned long *)var);
+	char *p = (char *) page;
 
+	*var = simple_strtoul(p, &p, 10);
 	return count;
 }
 
@@ -703,7 +703,7 @@ static ssize_t __FUNC(struct elevator_queue *e,				\
 		const char *page, size_t count)				\
 {									\
 	struct row_data *rowd = e->elevator_data;			\
-	int __data;						\
+	unsigned long __data;						\
 	int ret = row_var_store(&__data, (page), count);		\
 	if (__CONV)							\
 		__data = (int)msecs_to_jiffies(__data);			\
