@@ -1,0 +1,12 @@
+LuPuS configuration files can be found in arch/arm/configs.
+
+--HDPI
+Xperia PLAY => gar_zeus_defconfig
+Xperia ARC/s => gar_anzu_defconfig
+Xperia NEO/v => gar_haida_defconfig
+Xperia PRO => gar_iyokan_defconfig
+Xperia RAY => gar_urushi_defconfig
+--Xperia MDPI => gar_mango_defconfig
+              => gar_smultron_defconfig
+              => gar_satsuma_defconfig
+              => gar_coconut_defconfig
