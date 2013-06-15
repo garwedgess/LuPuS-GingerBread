@@ -139,7 +139,7 @@ struct mmc_card {
 #define mmc_card_set_readonly(c) ((c)->state |= MMC_STATE_READONLY)
 #define mmc_card_set_highspeed(c) ((c)->state |= MMC_STATE_HIGHSPEED)
 #define mmc_card_set_blockaddr(c) ((c)->state |= MMC_STATE_BLOCKADDR)
-#ifdef CONFIG_MACH_SEMC_ZEUS
+#if defined(CONFIG_MACH_SEMC_ZEUS) || defined(CONFIG_MACH_SEMC_PHOENIX)
 #define mmc_card_set_removed(c) ((c)->state |= MMC_STATE_REMOVED)
 #endif /* CONFIG_MACH_SEMC_ZEUS */
 
