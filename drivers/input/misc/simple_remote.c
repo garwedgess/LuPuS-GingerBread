@@ -149,7 +149,6 @@ struct simple_remote_driver {
 
 	atomic_t detection_in_progress;
 	atomic_t detect_cycle;
-	atomic_t initialized;
 
 	u8 pressed_button;
 	u8 nodetect_cycles;
@@ -182,8 +181,7 @@ static int simple_remote_attrs_set_data_buffer(char *buf, const int *array,
 	int buf_pos = 0;
 
 	for (j = 0; j < array_len; j++) {
-		buf_pos += snprintf(&buf[buf_pos], PAGE_SIZE - buf_pos,
-				"%d ", array[j]);
+		buf_pos += sprintf(&buf[buf_pos], "%d ", array[j]);
 
 		if (buf_pos >= PAGE_SIZE) {
 			pr_err("*** %s - Error! len (%d) > PAGE_SIZE\n",
@@ -642,23 +640,13 @@ static void simple_remote_plug_det_work(struct work_struct *work)
 		} else {
 			jack->num_omtp_detections++;
 		}
+		jack->num_headphone_detections = 0;
+	} else {
+		jack->num_headphone_detections++;
 	}
 
-	if (jack->new_accessory_state == DEVICE_HEADPHONE)
-		jack->num_headphone_detections++;
-	else
-		jack->num_headphone_detections = 0;
-
-	/*
-	 * Avoid the conflict between audio path changing and alternate
-	 * ADC reading.
-	 * Accessory state report to the upper layer is deferred until OMTP
-	 * detection cycle finishes when the accessory state is DEVICE_HEADSET.
-	 */
-	if (!(jack->new_accessory_state == DEVICE_HEADPHONE ||
-	    jack->new_accessory_state == DEVICE_HEADSET) ||
-	    jack->num_headphone_detections >= MIN_NUM_HEADPHONE_DETECTIONS ||
-	    jack->num_omtp_detections >= MIN_NUM_OMTP_DETECTIONS)
+	if (jack->new_accessory_state != DEVICE_HEADPHONE ||
+	    jack->num_headphone_detections >= MIN_NUM_HEADPHONE_DETECTIONS)
 		simple_remote_report_accessory_type(jack);
 
 	dev_vdbg(jack->dev, "%s - used detection cycles = %d\n", __func__,
@@ -744,13 +732,9 @@ static irqreturn_t simple_remote_button_irq_handler(int irq, void *data)
 
 	struct simple_remote_driver *jack = data;
 
-	if (atomic_read(&jack->initialized)) {
-		dev_dbg(jack->dev, "Received a Button interrupt\n");
-		schedule_work(&jack->btn_det_work);
-	} else {
-		dev_dbg(jack->dev, "Received button IRQ before initialized "
-			"system. Discarding\n");
-	}
+	dev_dbg(jack->dev, "Received a Button interrupt\n");
+
+	schedule_work(&jack->btn_det_work);
 
 	return IRQ_HANDLED;
 }
@@ -897,8 +881,6 @@ static int simple_remote_probe(struct platform_device *pdev)
 	}
 
 	dev_info(jack->dev, "***** Successfully registered\n");
-
-	atomic_set(&jack->initialized, 1);
 
 	return ret;
 

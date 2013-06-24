@@ -129,7 +129,6 @@ struct msm_hsusb_gadget_platform_data {
 	void (*phy_reset)(void);
 
 	int self_powered;
-	int is_phy_status_timer_on;
 };
 
 struct msm_hsusb_platform_data {
@@ -193,8 +192,6 @@ struct msm_otg_platform_data {
 	void (*chg_vbus_draw)(unsigned ma);
 	int  (*chg_init)(int init);
 	int  (*chg_is_initialized)(void);
-
-	unsigned vbus_drawable_ida;
 };
 
 struct msm_usb_host_platform_data {

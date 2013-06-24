@@ -138,9 +138,7 @@ static const char shortname[] = DRIVER_NAME;
 #define INFO(d, fmt, args...) \
 	dev_info(&(d)->cdev->gadget->dev , fmt , ## args)
 
-#ifdef CONFIG_USB_CSW_HACK
-static int write_error_after_csw_sent;
-#endif
+
 /*-------------------------------------------------------------------------*/
 
 /* SCSI device types */
@@ -220,7 +218,6 @@ struct bulk_cs_wrap {
 #define SC_WRITE_6			0x0a
 #define SC_WRITE_10			0x2a
 #define SC_WRITE_12			0xaa
-#define SC_READ_CAPACITY_16		0x9e
 #ifdef CONFIG_USB_MARLIN_SCSI_EXTENSIONS
 #define SC_SEND_KEY			0xa3
 #define SC_REPORT_KEY			0xa4
@@ -246,16 +243,9 @@ struct bulk_cs_wrap {
 #define ASC(x)		((u8) ((x) >> 8))
 #define ASCQ(x)		((u8) (x))
 
-/* VPD(Vital product data) Page Name */
-#define VPD_SUPPORTED_VPD_PAGES		0x00
-#define VPD_UNIT_SERIAL_NUMBER		0x80
-#define VPD_DEVICE_IDENTIFICATION	0x83
-
 
 /*-------------------------------------------------------------------------*/
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-struct kddi_data;
-#endif
+
 struct lun {
 	struct file	*filp;
 	loff_t		file_length;
@@ -278,10 +268,6 @@ struct lun {
 	u32		unit_attention_data;
 
 	struct device	dev;
-	char		*lun_filename;
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-	struct kddi_data *kddi_data;
-#endif
 };
 
 #define backing_file_is_open(curlun)	((curlun)->filp != NULL)
@@ -297,7 +283,6 @@ static struct lun *dev_to_lun(struct device *dev)
 
 /* Number of buffers for CBW, DATA and CSW */
 #ifdef CONFIG_USB_CSW_HACK
-static int csw_hack_sent;
 #define NUM_BUFFERS	4
 #else
 #define NUM_BUFFERS	2
@@ -418,10 +403,6 @@ struct fsg_dev {
 	struct switch_dev sdev;
 
 	struct wake_lock wake_lock;
-
-	/* inquiry */
-	char			*serial_number;
-	struct eui64_id		eui64_id;
 };
 static int send_status(struct fsg_dev *fsg);
 
@@ -450,8 +431,6 @@ static void set_bulk_out_req_length(struct fsg_dev *fsg,
 
 static struct fsg_dev			*the_fsg;
 
-static int	open_backing_file(struct fsg_dev *fsg, struct lun *curlun,
-				  const char *filename);
 static void	close_backing_file(struct fsg_dev *fsg, struct lun *curlun);
 static void	close_all_backing_files(struct fsg_dev *fsg);
 
@@ -459,10 +438,6 @@ static int fsync_sub(struct lun *curlun);
 #define RANDOM_WRITE_COUNT_TO_BE_FLUSHED (10)
 static int random_write_count;
 static loff_t last_offset;
-
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-#include "kddi_scsi_ext.c"
-#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -1038,6 +1013,7 @@ static int do_write(struct fsg_dev *fsg)
 	int			rc;
 
 #ifdef CONFIG_USB_CSW_HACK
+	int			csw_hack_sent = 0;
 	int			i;
 #endif
 	if (curlun->ro) {
@@ -1204,22 +1180,31 @@ static int do_write(struct fsg_dev *fsg)
 
 			/* If an error occurred, report it and its position */
 			if (nwritten < amount) {
+#ifdef CONFIG_USB_CSW_HACK
+				/*
+				 * If csw is already sent & write failure
+				 * occured, then detach the storage media
+				 * from the corresponding lun, and cable must
+				 * be disconnected to recover fom this error.
+				 */
+				if (csw_hack_sent) {
+					if (backing_file_is_open(curlun)) {
+						close_backing_file(fsg, curlun);
+						curlun->unit_attention_data =
+							SS_MEDIUM_NOT_PRESENT;
+					}
+					break;
+				}
+#endif
 				curlun->sense_data = SS_WRITE_ERROR;
 				curlun->sense_data_info = file_offset >>
 							curlun->shift_size;
 				curlun->info_valid = 1;
-#ifdef CONFIG_USB_CSW_HACK
-				write_error_after_csw_sent = 1;
-				goto write_error;
-#endif
 				break;
 			}
 
 #ifdef CONFIG_USB_CSW_HACK
-write_error:
 			if ((nwritten == amount) && !csw_hack_sent) {
-				if (write_error_after_csw_sent)
-					break;
 				/*
 				 * Check if any of the buffer is in the
 				 * busy state, if any buffer is in busy state,
@@ -1430,62 +1415,12 @@ static int do_verify(struct fsg_dev *fsg)
 static int do_inquiry(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 {
 	u8	*buf = (u8 *) bh->buf;
-	u8	evpd;
-	u8	page_code;
 
 	if (!fsg->curlun) {		/* Unsupported LUNs are okay */
 		fsg->bad_lun_okay = 1;
 		memset(buf, 0, 36);
 		buf[0] = 0x7f;		/* Unsupported, no device-type */
 		return 36;
-	}
-
-	evpd = fsg->cmnd[1] & 0x1;
-	page_code = fsg->cmnd[2];
-	if (evpd == 0 && page_code) {
-		fsg->curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
-		return -EINVAL;
-	}
-	if (evpd == 1) {
-		buf[0] = fsg->curlun->is_cdrom ? TYPE_CDROM : TYPE_DISK;
-		switch (page_code) {
-		case VPD_SUPPORTED_VPD_PAGES:
-			buf[1] = 0; /* page code */
-			buf[2] = 0; /* Reserved */
-			buf[3] = 3; /* PAGE LENGTH */
-			/* Supported VPD page list */
-			buf[4] = VPD_SUPPORTED_VPD_PAGES;
-			buf[5] = VPD_UNIT_SERIAL_NUMBER;
-			buf[6] = VPD_DEVICE_IDENTIFICATION;
-			return 7;
-
-		case VPD_UNIT_SERIAL_NUMBER:
-			buf[1] = VPD_UNIT_SERIAL_NUMBER; /* page code */
-			buf[2] = 0; /* Reserved */
-			/* PAGE LENGTH */
-			buf[3] = strlen(fsg->serial_number) + 1;
-			/* PRODUCT SERIAL NUMBER */
-			strcpy(&buf[4], fsg->serial_number);
-			return strlen(&buf[4]) + 1 + 4;
-
-		case VPD_DEVICE_IDENTIFICATION:
-			buf[1] = VPD_DEVICE_IDENTIFICATION; /* page code */
-			buf[2] = 0; /* PAGE LENGTH (MSB) */
-			buf[3] = 12; /* PAGE LENGTH (LSB) */
-			/* Identification descriptor list */
-			buf[4] = 1; /* CODE SET */
-			buf[5] = 2; /* IDENTIFIER TYPE */
-			buf[6] = 0; /* Reserved */
-			buf[7] = 8; /* IDENTIFIER LENGTH (n-3) */
-			/* IEEE COMPANY_ID */
-			memcpy(&buf[8], fsg->eui64_id.ieee_company_id,
-			       sizeof(fsg->eui64_id.ieee_company_id));
-			/* VENDOR SPECIFIC EXTENSION IDENTIFIER */
-			memcpy(&buf[11],
-			       fsg->eui64_id.vendor_specific_ext_field,
-			       sizeof(fsg->eui64_id.vendor_specific_ext_field));
-			return 16;
-		}
 	}
 
 	memset(buf, 0, 8);	/* Non-removable, direct-access device */
@@ -1496,24 +1431,13 @@ static int do_inquiry(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 		buf[0] = TYPE_DISK;
 		buf[1] = 0x80;	/* set removable bit */
 	}
-	buf[2] = 0x4;		/* ANSI SCSI SPC-2 */
+	buf[2] = 2;		/* ANSI SCSI level 2 */
 	buf[3] = 2;		/* SCSI-2 INQUIRY data format */
 	buf[4] = 31;		/* Additional length */
 				/* No special options */
 	sprintf(buf + 8, "%-8s%-16s%04x", fsg->curlun->vendor,
 			fsg->curlun->product,
 			fsg->curlun->release);
-
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-	if (!fsg->curlun->is_cdrom) {
-		/* return data size */
-		buf[4] = 31 + INQUIRY_KDDI_SPECIFIC_SIZE;
-		/* Vendor specific (offset 36) */
-		memcpy(buf + 36, fsg->curlun->kddi_data->inquiry_kddi_ext,
-		       INQUIRY_KDDI_SPECIFIC_SIZE);
-		return 36 + INQUIRY_KDDI_SPECIFIC_SIZE;
-	}
-#endif
 	return 36;
 }
 
@@ -1588,26 +1512,6 @@ static int do_read_capacity(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 	put_be32(&buf[0], curlun->num_sectors - 1);	/* Max logical block */
 	put_be32(&buf[4], 1 << curlun->shift_size);	/* Set block length */
 	return 8;
-}
-
-static int do_read_capacity16(struct fsg_dev *fsg, struct fsg_buffhd *bh)
-{
-	struct lun	*curlun = fsg->curlun;
-	u64		lba = be64_to_cpu(*((u64 *) &fsg->cmnd[2]));
-	int		pmi = fsg->cmnd[14];
-	u8		*buf = (u8 *) bh->buf;
-
-	/* Check the PMI and LBA fields */
-	if (pmi > 1 || (pmi == 0 && lba != (u64) 0)) {
-		curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
-		return -EINVAL;
-	}
-
-	/* Max logical block */
-	*((u64 *) &buf[0]) = cpu_to_be64(curlun->num_sectors - 1);
-	put_be32(&buf[8], 1 << curlun->shift_size);	/* Set block length */
-	memset(&buf[12], 0, 20);
-	return 32;
 }
 
 static void store_cdrom_address(u8 *dest, int msf, u32 addr)
@@ -1782,26 +1686,11 @@ static int do_start_stop(struct fsg_dev *fsg)
 	loej = fsg->cmnd[4] & 0x02;
 	start = fsg->cmnd[4] & 0x01;
 
-	if (!start) {
-		if (loej) {
-			/* eject request from the host */
-			if (backing_file_is_open(curlun)) {
-				close_backing_file(fsg, curlun);
-				curlun->unit_attention_data =
-				    SS_MEDIUM_NOT_PRESENT;
-			}
-		}
-	} else {
-		if (loej && !backing_file_is_open(curlun)) {
-			if (curlun->lun_filename &&
-				open_backing_file(fsg, curlun,
-						  curlun->lun_filename) == 0) {
-					curlun->unit_attention_data =
-					    SS_NOT_READY_TO_READY_TRANSITION;
-			} else {
-				curlun->sense_data = SS_MEDIUM_NOT_PRESENT;
-				return -EINVAL;
-			}
+	if (loej) {
+		/* eject request from the host */
+		if (backing_file_is_open(curlun)) {
+			close_backing_file(fsg, curlun);
+			curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
 		}
 	}
 
@@ -2088,11 +1977,7 @@ static int send_status(struct fsg_dev *fsg)
 	 * writing on to storage media, need to set
 	 * residue to zero,assuming that write will succeed.
 	 */
-	if (write_error_after_csw_sent) {
-		write_error_after_csw_sent = 0;
-		csw->Residue = cpu_to_le32(fsg->residue);
-	} else
-		csw->Residue = 0;
+	csw->Residue = 0;
 #else
 	csw->Residue = cpu_to_le32(fsg->residue);
 #endif
@@ -2139,7 +2024,13 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 
 	} else {					/* Bulk-only */
 		if (fsg->data_size < fsg->data_size_from_cmnd) {
+
+			/* Host data size < Device data size is a phase error.
+			 * Carry out the command, but only transfer as much
+			 * as we are allowed. */
+			DBG(fsg, "phase error 1\n");
 			fsg->data_size_from_cmnd = fsg->data_size;
+			fsg->phase_error = 1;
 		}
 	}
 	fsg->residue = fsg->usb_amount_left = fsg->data_size;
@@ -2252,7 +2143,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 	case SC_INQUIRY:
 		fsg->data_size_from_cmnd = fsg->cmnd[4];
 		if ((reply = check_command(fsg, 6, DATA_DIR_TO_HOST,
-				(1<<1) | (1<<2) | (1<<4), 0,
+				(1<<4), 0,
 				"INQUIRY")) == 0)
 			reply = do_inquiry(fsg, bh);
 		break;
@@ -2328,15 +2219,6 @@ static int do_scsi_command(struct fsg_dev *fsg)
 				(0xf<<2) | (1<<8), 1,
 				"READ CAPACITY")) == 0)
 			reply = do_read_capacity(fsg, bh);
-		break;
-
-	case SC_READ_CAPACITY_16:
-		fsg->data_size_from_cmnd = 32;
-		reply = check_command(fsg, 16, DATA_DIR_TO_HOST,
-				(0xff << 2) | (0xf << 10) | (1 << 14), 1,
-				"READ CAPACITY 16");
-		if (reply == 0)
-			reply = do_read_capacity16(fsg, bh);
 		break;
 
 	case SC_READ_HEADER:
@@ -2432,22 +2314,6 @@ static int do_scsi_command(struct fsg_dev *fsg)
 				"WRITE(12)")) == 0)
 			reply = do_write(fsg);
 		break;
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-	case SC_KDDI_CMD00:
-	case SC_KDDI_CMD01:
-	case SC_KDDI_CMD02:
-	case SC_KDDI_CMD03:
-	case SC_KDDI_CMD04:
-	case SC_KDDI_CMD05:
-	case SC_KDDI_CMD06:
-	case SC_KDDI_CMD07:
-	case SC_KDDI_CMD08:
-	case SC_KDDI_CMD09:
-	case SC_KDDI_CMD10:
-	case SC_KDDI_CMD11:
-		reply = kddi_scsi_ext_do_cmd(fsg);
-		break;
-#endif
 #ifdef CONFIG_USB_MARLIN_SCSI_EXTENSIONS
 	case SC_REPORT_KEY:
 		fsg->data_size_from_cmnd = get_be16(&fsg->cmnd[8]);
@@ -2924,10 +2790,9 @@ static int fsg_main_thread(void *fsg_)
 		 * need to skip sending status once again if it is a
 		 * write scsi command.
 		 */
-		if (csw_hack_sent) {
-			csw_hack_sent = 0;
+		if (fsg->cmnd[0] == SC_WRITE_6  || fsg->cmnd[0] == SC_WRITE_10
+					|| fsg->cmnd[0] == SC_WRITE_12)
 			continue;
-		}
 #endif
 		if (send_status(fsg))
 			continue;
@@ -3078,17 +2943,31 @@ static void close_all_backing_files(struct fsg_dev *fsg)
 {
 	int	i;
 
-	for (i = 0; i < fsg->nluns; ++i) {
+	for (i = 0; i < fsg->nluns; ++i)
 		close_backing_file(fsg, &fsg->luns[i]);
-		kfree(fsg->luns[i].lun_filename);
-		fsg->luns[i].lun_filename = NULL;
-	}
+}
+
+static int check_dev_state(struct device *dev)
+{
+	struct lun *curlun = dev_to_lun(dev);
+	struct fsg_dev	*fsg = dev_get_drvdata(dev);
+
+	if ((!curlun->is_cdrom && fsg->func_type != FUNC_TYPE_MSC) ||
+		(curlun->is_cdrom && fsg->func_type != FUNC_TYPE_CDROM))
+		return -ENODEV;
+
+	return 0;
 }
 
 static ssize_t show_ro(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct lun *curlun = dev_to_lun(dev);
+	ssize_t rc;
+
+	rc = check_dev_state(dev);
+	if (rc)
+		return 0;
 
 	return sprintf(buf, "%d\n", curlun->ro);
 }
@@ -3100,6 +2979,10 @@ static ssize_t show_file(struct device *dev, struct device_attribute *attr,
 	struct fsg_dev	*fsg = dev_get_drvdata(dev);
 	char		*p;
 	ssize_t		rc;
+
+	rc = check_dev_state(dev);
+	if (rc)
+		return 0;
 
 	down_read(&fsg->filesem);
 	if (backing_file_is_open(curlun)) {	/* Get the complete pathname */
@@ -3128,11 +3011,16 @@ static ssize_t store_ro(struct device *dev, struct device_attribute *attr,
 	struct fsg_dev	*fsg = dev_get_drvdata(dev);
 	int		i;
 
+	rc = check_dev_state(dev);
+	if (rc)
+		return 0;
+
 	if (sscanf(buf, "%d", &i) != 1)
 		return -EINVAL;
 
 	/* Allow the write-enable status to change only while the backing file
 	 * is closed. */
+	rc = count;
 	down_read(&fsg->filesem);
 	if (backing_file_is_open(curlun)) {
 		LDBG(curlun, "read-only status change prevented\n");
@@ -3153,6 +3041,11 @@ static ssize_t store_file(struct device *dev, struct device_attribute *attr,
 	int		rc = 0;
 
 	DBG(fsg, "store_file: \"%s\"\n", buf);
+
+	rc = check_dev_state(dev);
+	if (rc)
+		return 0;
+
 #if 0
 	/* disabled because we need to allow closing the backing file if the media was removed */
 	if (curlun->prevent_medium_removal && backing_file_is_open(curlun)) {
@@ -3174,30 +3067,18 @@ static ssize_t store_file(struct device *dev, struct device_attribute *attr,
 #endif
 		close_backing_file(fsg, curlun);
 		curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
-		kfree(curlun->lun_filename);
-		curlun->lun_filename = NULL;
 	}
 
 	/* Load new medium */
 	if (count > 0 && buf[0]) {
 		rc = open_backing_file(fsg, curlun, buf);
-		if (rc == 0) {
-			curlun->lun_filename = kmalloc(count, GFP_KERNEL);
-			if (!curlun->lun_filename) {
-				rc = -ENOMEM;
-				close_backing_file(fsg, curlun);
-				curlun->unit_attention_data =
-				    SS_MEDIUM_NOT_PRESENT;
-			} else {
-				memcpy(curlun->lun_filename, buf, count);
-				curlun->unit_attention_data =
+		if (rc == 0)
+			curlun->unit_attention_data =
 					SS_NOT_READY_TO_READY_TRANSITION;
 #ifdef CONFIG_USB_MARLIN_SCSI_EXTENSIONS
-				if (!curlun->is_cdrom)
-					mldd_mount();
+		if (rc == 0 && !curlun->is_cdrom)
+			mldd_mount();
 #endif
-			}
-		}
 	}
 	up_write(&fsg->filesem);
 	return (rc < 0 ? rc : count);
@@ -3270,9 +3151,6 @@ fsg_function_unbind(struct usb_configuration *c, struct usb_function *f)
 	for (i = 0; i < fsg->nluns; ++i) {
 		curlun = &fsg->luns[i];
 		if (curlun->registered) {
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-			kddi_scsi_ext_fin(curlun);
-#endif
 			device_remove_file(&curlun->dev, &dev_attr_file);
 			device_unregister(&curlun->dev);
 			curlun->registered = 0;
@@ -3299,6 +3177,24 @@ fsg_function_unbind(struct usb_configuration *c, struct usb_function *f)
 
 static void setup_luns(struct fsg_dev *fsg)
 {
+	int		i;
+	struct lun	*curlun;
+
+	down_write(&fsg->filesem);
+	for (i = 0; i < fsg->nluns; ++i) {
+		curlun = &fsg->luns[i];
+
+#ifdef CONFIG_USB_MARLIN_SCSI_EXTENSIONS
+		if (!curlun->is_cdrom)
+			mldd_unmount();
+#endif
+		if (backing_file_is_open(curlun)) {
+			close_backing_file(fsg, curlun);
+			curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+		}
+	}
+	up_write(&fsg->filesem);
+
 	if (fsg->func_type == FUNC_TYPE_MSC || fsg->cdrom_nluns < 1) {
 		fsg->nluns = fsg->msc_nluns;
 		fsg->luns = fsg->luns_all;
@@ -3419,14 +3315,6 @@ fsg_function_bind(struct usb_configuration *c, struct usb_function *f)
 			goto out;
 		}
 
-#ifdef CONFIG_USB_KDDI_SCSI_EXTENSIONS
-		rc = kddi_scsi_ext_init(curlun);
-		if (rc != 0) {
-			ERROR(fsg, "kddi scsi ext init failed: %d\n", rc);
-			device_unregister(&curlun->dev);
-			goto out;
-		}
-#endif
 		curlun->registered = 1;
 		kref_get(&fsg->ref);
 	}
@@ -3608,11 +3496,6 @@ static int __init fsg_probe(struct platform_device *pdev)
 		fsg->msc_nluns = pdata->nluns;
 		fsg->cdrom_nluns = pdata->cdrom_nluns;
 		fsg->nluns = fsg->msc_nluns + fsg->cdrom_nluns;
-		if (pdata->serial_number)
-			fsg->serial_number = pdata->serial_number;
-		else
-			fsg->serial_number = "0123456789ABCDEF";
-		fsg->eui64_id = pdata->eui64_id;
 	}
 
 	return 0;

@@ -53,7 +53,6 @@ static const uint32_t pm_rpc_versions[] = {
 	0x30002,
 	0x30003,
 	0x30004,
-	0x30005,
 };
 
 static void set_pmic_vibrator(void)
@@ -145,7 +144,7 @@ static void vibrator_enable(struct timed_output_dev *dev, int value)
 	if (value == 0) {
 		vibe_state = TASK_FORCE_STOP;
 	} else {
-		long_vibe_time = value;
+		long_vibe_time = (value > 15000 ? 15000 : value);
 		vibe_state = TASK_KICK_START;
 		pr_debug("%s: Value=%d\n", __func__, value);
 	}

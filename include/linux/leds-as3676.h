@@ -72,13 +72,6 @@ struct as3676_als_config {
 	struct as3676_als_curve curve[AS3676_AMB_MAX];
 };
 
-struct as3676_audio_config {
-	int current_3x;
-	int audio_control;
-	int audio_input;
-	int audio_output;
-};
-
 enum as3676_sinks {
 	AS3676_SINK_01,
 	AS3676_SINK_02,
@@ -104,11 +97,8 @@ enum as3676_led_flags {
 	AS3676_FLAG_ALS_GROUP2	= (1 << 3), /* connected to the ALS group2 */
 	AS3676_FLAG_ALS_GROUP3	= (1 << 4), /* connected to the ALS group3 */
 	AS3676_FLAG_PWM_INIT	= (1 << 5), /* should turn on slowly once */
-	AS3676_FLAG_PWM_CTRL	= (1 << 6),
-	AS3676_FLAG_DLS	= (1 << 7), /* should be connected to the DLS */
-	AS3676_FLAG_AUDIO 	= (1 << 8), /* should be connected to audio*/
-	AS3676_FLAG_WAIT_RESUME	= (1 << 9),
-					/* should not control during suspend */
+	AS3676_FLAG_DLS		= (1 << 6), /* should be connected to the DLS */
+
 	AS3676_FLAG_ALS	= AS3676_FLAG_ALS_GROUP1,
 	AS3676_FLAG_ALS_MASK	= (AS3676_FLAG_ALS_GROUP1 |
 					AS3676_FLAG_ALS_GROUP2 |
@@ -131,11 +121,9 @@ enum as3676_ldo {
 struct as3676_platform_data {
 	struct as3676_platform_led *leds;
 	int als_connected;
-	int als_wait;
 	int dls_connected;
 	int num_leds;
 	struct as3676_als_config *als_config;
-	struct as3676_audio_config *audio_config;
 	int ldo_mV;
 };
 

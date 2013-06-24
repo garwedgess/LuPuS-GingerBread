@@ -1,5 +1,4 @@
-/* Copyright (c) 2008-2011, Code Aurora Forum. All rights reserved.
- * Copyright (C) 2010, 2011 Sony Ericsson Mobile Communications AB
+/* Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
  *
  * All source code in this file is licensed under the following license except
  * where indicated.
@@ -15,9 +14,6 @@
  * See the GNU General Public License for more details.
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, you can find it at http://www.fsf.org.
- *
- * NOTE: This file has been modified by Sony Ericsson Mobile Communications AB.
- * Modifications are licensed under the License.
  */
 
 #include <linux/init.h>
@@ -37,7 +33,6 @@
 #include <asm/dma.h>
 #include <linux/dma-mapping.h>
 #include <linux/msm_audio.h>
-#include <linux/pm_qos_params.h>
 
 #include "msm7kv2-pcm.h"
 #include <asm/mach-types.h>
@@ -56,11 +51,6 @@ char snddev_name[AUDIO_DEV_CTL_MAX_DEV][44];
 #define MSM_MAX_VOLUME 0x2000
 #define MSM_VOLUME_STEP ((MSM_MAX_VOLUME+17)/100) /* 17 added to avoid
 						      more deviation */
-
-#define STEREO_RECORDING_SNDDEV "speaker_dual_mic_endfire_tx_real_stereo"
-#define MODULE_NAME "msm_audio"
-#define PM_QOS_NO_ISAPC 10
-
 static int device_index; /* Count of Device controls */
 static int simple_control; /* Count of simple controls*/
 
@@ -339,16 +329,6 @@ static int msm_device_put(struct snd_kcontrol *kcontrol,
 
 	if (set) {
 		if (!dev_info->opened) {
-#if defined(CONFIG_MACH_SEMC_MANGO)
-			if (strcmp(dev_info->name,
-				STEREO_RECORDING_SNDDEV) == 0) {
-				MM_INFO("insert cpu_dma_latency"
-						"for stereo recording\n");
-				pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY,
-							MODULE_NAME,
-							PM_QOS_NO_ISAPC);
-			}
-#endif
 			set_freq = dev_info->sample_rate;
 			if (!msm_device_is_voice(route_cfg.dev_id)) {
 				msm_get_voc_freq(&tx_freq, &rx_freq);
@@ -361,7 +341,7 @@ static int msm_device_put(struct snd_kcontrol *kcontrol,
 				set_freq = dev_info->sample_rate;
 
 
-			MM_INFO("device freq =%d\n", set_freq);
+			MM_ERR("device freq =%d\n", set_freq);
 			rc = dev_info->dev_ops.set_freq(dev_info, set_freq);
 			if (rc < 0) {
 				MM_ERR("device freq failed!\n");
@@ -377,22 +357,9 @@ static int msm_device_put(struct snd_kcontrol *kcontrol,
 			dev_info->opened = 1;
 			broadcast_event(AUDDEV_EVT_DEV_RDY, route_cfg.dev_id,
 							SESSION_IGNORE);
-			/* Event to notify client for device info */
-			broadcast_event(AUDDEV_EVT_DEVICE_INFO,
-					route_cfg.dev_id, SESSION_IGNORE);
 		}
 	} else {
 		if (dev_info->opened) {
-#if defined(CONFIG_MACH_SEMC_MANGO)
-			if (strcmp(dev_info->name,
-				STEREO_RECORDING_SNDDEV) == 0) {
-				MM_INFO("remove cpu_dma_latency"
-						"for stereo recording\n");
-				pm_qos_remove_requirement(
-						PM_QOS_CPU_DMA_LATENCY,
-						MODULE_NAME);
-			}
-#endif
 			broadcast_event(AUDDEV_EVT_REL_PENDING,
 						route_cfg.dev_id,
 						SESSION_IGNORE);
@@ -497,15 +464,10 @@ static int msm_route_put(struct snd_kcontrol *kcontrol,
 			dev_info->sessions &= ~(session_mask);
 		} else {
 			dev_info->sessions = dev_info->sessions | session_mask;
-			if (dev_info->opened) {
+			if (dev_info->opened)
 				broadcast_event(AUDDEV_EVT_DEV_RDY,
 							route_cfg.dev_id,
 							session_mask);
-				/* Event to notify client for device info */
-				broadcast_event(AUDDEV_EVT_DEVICE_INFO,
-							route_cfg.dev_id,
-							session_mask);
-			}
 		}
 	} else {
 		rc = msm_snddev_set_enc(session_id, dev_info->copp_id, set);
@@ -539,15 +501,10 @@ static int msm_route_put(struct snd_kcontrol *kcontrol,
 							SESSION_IGNORE);
 				}
 			}
-			if (dev_info->opened) {
+			if (dev_info->opened)
 				broadcast_event(AUDDEV_EVT_DEV_RDY,
 							route_cfg.dev_id,
 							session_mask);
-				/* Event to notify client for device info */
-				broadcast_event(AUDDEV_EVT_DEVICE_INFO,
-							route_cfg.dev_id,
-							session_mask);
-			}
 		}
 	}
 
@@ -616,30 +573,6 @@ static int msm_device_volume_put(struct snd_kcontrol *kcontrol,
 	return rc;
 }
 
-static int msm_reset_info(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_info *uinfo)
-{
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
-	uinfo->count = 1;
-	uinfo->value.integer.min = 0;
-	uinfo->value.integer.max = 0;
-	return 0;
-}
-
-static int msm_reset_get(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	ucontrol->value.integer.value[0] = 0;
-	return 0;
-}
-
-static int msm_reset_put(struct snd_kcontrol *kcontrol,
-				struct snd_ctl_elem_value *ucontrol)
-{
-	MM_DBG("Resetting all devices\n");
-	return msm_reset_all_device();
-}
-
 static int msm_device_mute_info(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_info *uinfo)
 {
@@ -653,6 +586,7 @@ static int msm_device_mute_info(struct snd_kcontrol *kcontrol,
 static int msm_device_mute_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
+	ucontrol->value.integer.value[0] = 0;
 	return 0;
 }
 
@@ -674,7 +608,7 @@ static int msm_device_mute_put(struct snd_kcontrol *kcontrol,
 	if (dev_info->capability & SNDDEV_CAP_RX)
 		return -EPERM;
 
-	MM_DBG("Muting device id %d(%s)\n", dev_id, dev_info->name);
+	MM_DBG("Muting device id %d(%s) afe_id=%d mute=%d\n", dev_id, dev_info->name, dev_info->copp_id, mute);
 
 	if (dev_info->copp_id == 0)
 		afe_dev_id = AFE_HW_PATH_CODEC_TX;
@@ -745,9 +679,7 @@ static struct snd_kcontrol_new snd_msm_controls[] = {
 						msm_v_call_put, 0),
 	MSM_EXT("Device_Volume", 9, msm_device_volume_info,
 			msm_device_volume_get, msm_device_volume_put, 0),
-	MSM_EXT("Reset", 10, msm_reset_info,
-			msm_reset_get, msm_reset_put, 0),
-	MSM_EXT("Device_Mute", 11, msm_device_mute_info,
+	MSM_EXT("Device_Mute", 10, msm_device_mute_info,
 			msm_device_mute_get, msm_device_mute_put, 0),
 };
 
@@ -811,6 +743,7 @@ static struct snd_soc_device msm_audio_snd_devdata = {
 	.card = &snd_soc_card_msm,
 	.codec_dev = &soc_codec_dev_msm,
 };
+
 
 static int __init msm_audio_init(void)
 {

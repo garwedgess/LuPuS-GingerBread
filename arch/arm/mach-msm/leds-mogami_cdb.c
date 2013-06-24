@@ -15,7 +15,7 @@ static struct as3676_platform_led as3676_leds_mapping[] = {
 	{
 		.name = "lcd-backlight",
 		.sinks = BIT(AS3676_SINK_01),
-		.flags = AS3676_FLAG_ALS | AS3676_FLAG_WAIT_RESUME,
+		.flags = AS3676_FLAG_ALS,
 		.max_current = 25000,
 		.default_brightness = LED_FULL,
 	},
@@ -58,7 +58,6 @@ struct as3676_platform_data as3676_platform_data = {
 	.leds = as3676_leds_mapping,
 	.num_leds = ARRAY_SIZE(as3676_leds_mapping),
 	.als_connected = 1,
-	.als_wait = 100,
 	.dls_connected = false,
 	.ldo_mV = 3000,
 };

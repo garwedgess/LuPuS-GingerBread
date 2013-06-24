@@ -9,6 +9,8 @@
 struct novatek_fwvga_platform_data {
 	int (*power)(int on);
 	int (*reset)(void);
+	u32 width;	/* in mm; optional */
+	u32 height;	/* in mm; optional */
 };
 
 struct panel_id;
@@ -30,7 +32,5 @@ extern const struct panel_id novatek_panel_id_sony_acx427ak;
 extern const struct panel_id novatek_panel_id_sony_acx424ak;
 extern const struct panel_id novatek_panel_id_hitachi_dx09d09vm_type1;
 extern const struct panel_id novatek_panel_id_hitachi_dx09d09vm;
-extern const struct panel_id novatek_panel_id_sharp_ls033t3lx01;
-extern const struct panel_id novatek_panel_id_tmd_lt033mdv1000;
 
 #endif

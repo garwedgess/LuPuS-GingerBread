@@ -94,7 +94,7 @@ struct rpcrouter_sdio_xprt {
 static struct rpcrouter_sdio_xprt sdio_remote_xprt;
 
 static void sdio_xprt_read_data(struct work_struct *work);
-static DECLARE_DELAYED_WORK(work_read_data, sdio_xprt_read_data);
+static DECLARE_WORK(work_read_data, sdio_xprt_read_data);
 static struct workqueue_struct *sdio_xprt_read_workqueue;
 static wait_queue_head_t free_buf_wait;
 
@@ -170,7 +170,7 @@ static int sdio_buf_read(void *data, uint32_t len)
 			active_buf->read_start_index = 0;
 			active_buf->read_end_index = 0;
 			active_buf->size = 0;
-			active_buf->state = FREEFIX;
+			active_buf->state = FREE;
 		} else
 			active_buf->state = DATA_READY;
 	}
@@ -290,7 +290,6 @@ static void sdio_xprt_write_data(struct work_struct *work)
 static int rpcrouter_sdio_remote_close(void)
 {
 	SDIO_XPRT_DBG("sdio_xprt Called %s\n", __func__);
-	flush_workqueue(sdio_xprt_read_workqueue);
 	sdio_close(sdio_remote_xprt.channel->handle);
 	free_sdio_xprt(sdio_remote_xprt.channel);
 	return 0;
@@ -339,18 +338,6 @@ find_buf:
 			avail = (SDIO_IN_BUF_SIZE -
 				 input_buffer->read_start_index);
 		}
-
-		if (avail != read_avail) {
-			work_queued = 0;
-			spin_unlock_irqrestore(&sdio_remote_xprt.channel->lock,
-						flags);
-			SDIO_XPRT_DBG("No memory, read later\n");
-			queue_delayed_work(sdio_xprt_read_workqueue,
-					   &work_read_data,
-					   msecs_to_jiffies(100));
-			return;
-		}
-
 		spin_unlock_irqrestore(&sdio_remote_xprt.channel->lock, flags);
 
 		size = sdio_read(sdio_remote_xprt.channel->handle,
@@ -363,9 +350,6 @@ find_buf:
 			printk(KERN_ERR "sdio_read failed,"
 					" read %d bytes, expected %d \n",
 					size, avail);
-			queue_delayed_work(sdio_xprt_read_workqueue,
-					   &work_read_data,
-					   msecs_to_jiffies(100));
 			return;
 		}
 
@@ -402,8 +386,7 @@ static void rpcrouter_sdio_remote_notify(void *_dev, unsigned event)
 	if (event == SDIO_EVENT_DATA_READ_AVAIL) {
 		SDIO_XPRT_DBG("%s Received Notify"
 			      "SDIO_EVENT_DATA_READ_AVAIL\n", __func__);
-		queue_delayed_work(sdio_xprt_read_workqueue,
-				   &work_read_data, 0);
+		queue_work(sdio_xprt_read_workqueue, &work_read_data);
 	}
 	if (event == SDIO_EVENT_DATA_WRITE_AVAIL) {
 		SDIO_XPRT_DBG("%s Received Notify"
@@ -434,7 +417,7 @@ static int allocate_sdio_xprt(struct sdio_xprt **sdio_xprt_chnl)
 	spin_lock_init(&chnl->lock);
 
 	for (i = 0; i < NO_OF_SDIO_IN_BUF; i++) {
-		chnl->buffer[i].state = FREEFIX;
+		chnl->buffer[i].state = FREE;
 		chnl->buffer[i].size = 0;
 		chnl->buffer[i].read_avail = 0;
 		chnl->buffer[i].read_start_index = 0;
